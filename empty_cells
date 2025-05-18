@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Usage: ./empty_cells <file> <sep>
+
+if [ $# -ne 2 ]; then
+  echo "Usage: $0 <filename> <separator>"
+  exit 1
+fi
+
+file="$1"
+sep="$2"
+
+if [ ! -f "$file" ]; then
+  echo "Error: '$file' not found"
+  exit 1
+fi
+
+# (Optional) strip Windows CRs in case there are any
+tmp=$(mktemp)
+tr -d '\r' < "$file" > "$tmp"
+
+# Read header
+IFS="$sep" read -r -a headers < "$tmp"
+num_cols=${#headers[@]}
+
+# Initialize counts
+declare -a empty_counts
+for ((i=0; i<num_cols; i++)); do
+  empty_counts[i]=0
+done
+
+# Loop in our shell via process-substitution
+while IFS="$sep" read -r -a row; do
+  # Pad short rows
+  for ((i=${#row[@]}; i<num_cols; i++)); do
+    row[i]=""
+  done
+
+  # Trim & count empties
+  for ((i=0; i<num_cols; i++)); do
+    # remove leading/trailing spaces
+    field="${row[i]#"${row[i]%%[![:space:]]*}"}"
+    field="${field%"${field##*[![:space:]]}"}"
+    if [ -z "$field" ]; then
+      (( empty_counts[i]++ ))
+    fi
+  done
+done < <(tail -n +2 "$tmp")
+
+# Print results
+for ((i=0; i<num_cols; i++)); do
+  echo "${headers[i]}: ${empty_counts[i]}"
+done
+
+rm "$tmp"
