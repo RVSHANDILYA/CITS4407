@@ -1,0 +1,26 @@
+# Ignore temporary and backup files
+*.tmp
+*.bak
+*.log
+
+# Ignore Excel files (if not required for analysis)
+*.xlsx
+
+# Ignore any test or intermediate files
+*.tsv
+*.csv
+*.dat
+
+# Ignore hidden system files (Windows)
+Thumbs.db
+.DS_Store
+
+# Ignore IDE and editor files
+.vscode/
+.idea/
+*.swp
+
+# Ignore compiled scripts or binary files
+*.out
+*.exe
+*.o
