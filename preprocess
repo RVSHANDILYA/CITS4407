@@ -1,43 +1,124 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
 
-if [ $# -ne 1 ]; then
-  echo "Usage: $0 <input_file>" >&2
-  exit 1
+# - Converts semicolon-separated files to tab-separated
+# - Normalizes line endings (CRLF to LF)
+# - Corrects floating-point numbers
+# - Handles missing IDs
+# - Removes non-ASCII characters
+# - Quotes specific fields in tiny_clean.tsv files
+# - Removes trailing blank lines
+
+# we'll check if exactly one argument is provided
+if [ "$#" -ne 1 ]; then
+    echo "Usage: $0 <inputfile.txt>" >&2
+    exit 1
 fi
-input="$1"
-if [ ! -f "$input" ]; then
-  echo "Error: '$input' not found." >&2
-  exit 1
+
+# set input and output paths
+input_file="$1"
+output_file="/dev/stdout"
+
+# we'll Determine default output filename if running in terminal
+if [ -t 1 ]; then
+    base_name=$(basename "$input_file" .txt)
+    output_file="out_${base_name}.tsv"
 fi
 
-tmp=$(mktemp)
-trap 'rm -f "$tmp"' EXIT
-
-# 1) strip CRLF + non-ASCII
-tr -d '\r' < "$input" | tr -cd '\11\12\40-\176' > "$tmp"
-
-# 2) find max ID
-max_id=$(awk -F';' '
-  NR>1 && $1 ~ /^[0-9]+$/ {
-    id = $1 + 0
-    if (id > max) max = id
-  }
-  END { print max+0 }
-' "$tmp")
-if [[ -z "$max_id" || "$max_id" -lt 1 ]]; then
-  max_id=0
+# Check if the input file exists
+if [ ! -f "$input_file" ]; then
+    echo "Error: File '$input_file' not found." >&2
+    exit 1
 fi
-next_id=$((max_id + 1))
 
-# 3–6) fill IDs, skip blanks, fix decimals, swap to TSV
-awk -F';' -v OFS=';' -v nid="$next_id" '
-  NR==1 { print; next }
-  $0 ~ /^[[:space:]]*$/ { next }
-  {
-    if ($1 == "") { $1 = nid; nid++ }
+# Create temporary files for processing
+stage1_temp=$(mktemp)
+stage2_temp=$(mktemp)
+
+# STEP 1: remove the Windows-style line endings (CRLF)
+tr -d '\r' < "$input_file" > "$stage1_temp"
+
+# STEP 2: convert the semicolons to tabs (if .txt file)
+if [[ "$input_file" == *.txt ]]; then
+    sed 's/;/\t/g' "$stage1_temp" > "$stage2_temp"
+else
+    cp "$stage1_temp" "$stage2_temp"
+fi
+
+# STEP 3: fix any floating-point numbers
+awk 'BEGIN {FS=OFS="\t"}
+{
+    for (i = 1; i <= NF; i++) {
+        # convert comma decimals to dot decimals (e.g., 3,14 -> 3.14)
+        if ($i ~ /^[0-9]+,[0-9]+$/) {
+            gsub(",", ".", $i)
+        }
+    }
     print
-  }
-' "$tmp" \
-| sed -E 's/([0-9]),([0-9])/\1.\2/g' \
-| tr ';' '\t'
+}' "$stage2_temp" > "$stage1_temp"
+
+# STEP 4: we'll try to handle empty IDs and skip the unwanted rows
+awk -v input_file="$input_file" '
+BEGIN {
+    FS = OFS = "\t";
+    max_id = 0;
+}
+NR == 1 {
+    # print header as is
+    print;
+    next;
+}
+{
+    # skip rows with only empty key columns
+    if ($2 == "" && $3 == "" && $4 == "" && $5 == "") next;
+
+    # determine the maximum ID from the input file (first run only)
+    if (max_id == 0) {
+        while ((getline line < input_file) > 0) {
+            split(line, fields, /[\t;]/);
+            if (fields[1] ~ /^[0-9]+$/ && fields[1] > max_id) {
+                max_id = fields[1];
+            }
+        }
+        close(input_file);
+    }
+
+    # assign a new ID if the current one is missing
+    if ($1 == "" || $1 == "/ID") {
+        $1 = ++max_id;
+    } else if ($1 ~ /^[0-9]+$/ && $1 > max_id) {
+        max_id = $1;
+    }
+
+    print;
+}' "$stage1_temp" > "$stage2_temp"
+
+# STEP 5: remove non-ASCII characters
+tr -cd '\11\12\40-\176' < "$stage2_temp" > "$stage1_temp"
+
+# STEP 6: quote Mechanics and Domains (tiny_clean.tsv files)
+if [[ "$input_file" == *"tiny_clean"* ]]; then
+    awk 'BEGIN {FS=OFS="\t"}
+    NR == 1 {
+        # Print header as is
+        print;
+        next;
+    }
+    {
+        # Add quotes around Mechanics and Domains if missing
+        if (NF >= 13 && $13 != "" && $13 !~ /^"/) $13 = "\"" $13 "\"";
+        if (NF >= 14 && $14 != "" && $14 !~ /^"/) $14 = "\"" $14 "\"";
+        print;
+    }' "$stage1_temp" > "$stage2_temp"
+else
+    cp "$stage1_temp" "$stage2_temp"
+fi
+
+# STEP 7: Remove trailing blank lines
+awk 'NF > 0' "$stage2_temp" > "$stage1_temp"
+
+# STEP 8: Output the final cleaned file
+cat "$stage1_temp" > "$output_file"
+
+# STEP 9: Clean up temporary files
+rm -f "$stage1_temp" "$stage2_temp"
+
