@@ -3,12 +3,7 @@
 *.bak
 *.log
 
-# Ignore Excel files (if not required for analysis)
-*.xlsx
-
 # Ignore any test or intermediate files
-*.tsv
-*.csv
 *.dat
 
 # Ignore hidden system files (Windows)
