@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ $# -ne 1 ]; then
+  echo "Usage: $0 <input_file>" >&2
+  exit 1
+fi
+input="$1"
+if [ ! -f "$input" ]; then
+  echo "Error: '$input' not found." >&2
+  exit 1
+fi
+
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+
+# 1) strip CRLF + non-ASCII
+tr -d '\r' < "$input" | tr -cd '\11\12\40-\176' > "$tmp"
+
+# 2) find max ID
+max_id=$(awk -F';' '
+  NR>1 && $1 ~ /^[0-9]+$/ {
+    id = $1 + 0
+    if (id > max) max = id
+  }
+  END { print max+0 }
+' "$tmp")
+if [[ -z "$max_id" || "$max_id" -lt 1 ]]; then
+  max_id=0
+fi
+next_id=$((max_id + 1))
+
+# 3–6) fill IDs, skip blanks, fix decimals, swap to TSV
+awk -F';' -v OFS=';' -v nid="$next_id" '
+  NR==1 { print; next }
+  $0 ~ /^[[:space:]]*$/ { next }
+  {
+    if ($1 == "") { $1 = nid; nid++ }
+    print
+  }
+' "$tmp" \
+| sed -E 's/([0-9]),([0-9])/\1.\2/g' \
+| tr ';' '\t'
